@@ -19,7 +19,19 @@ Proxy TCP para PostgreSQL que:
 - `SSL_REQUEST_CODE`: código inteiro para pedido de SSL (use `80877103`).
 - `DEBUG_LOG_QUERIES`: `true`/`false` para habilitar logs de consultas.
 
-Exemplo `.env` (PowerShell):
+Você pode definir via ambiente ou em um arquivo `.env` na raiz do projeto. O `.env` é carregado automaticamente (sem sobrescrever variáveis já definidas no ambiente).
+
+Exemplo `.env`:
+```
+PG_HOST=11.111.11.11
+PG_PORT=5432
+PROXY_HOST=11.111.11.11
+PROXY_PORT=5433
+SSL_REQUEST_CODE=80877103
+DEBUG_LOG_QUERIES=true
+```
+
+Exemplo no PowerShell (sem `.env`):
 ```powershell
 $env:PG_HOST = "11.111.11.11"
 $env:PG_PORT = "5432"
