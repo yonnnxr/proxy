@@ -31,16 +31,6 @@ def _get_required_bool(name: str) -> bool:
     )
 
 
-def _get_optional_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None or raw == "":
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        raise RuntimeError(f"Valor inválido para {name}: '{raw}'. Esperado inteiro.")
-
-
 def _load_dotenv_file(path: Path) -> None:
     try:
         if not path.exists() or not path.is_file():
@@ -109,10 +99,4 @@ SSL_REQUEST_CODE: int = _get_required_int("SSL_REQUEST_CODE")
 # Ativar logs de consultas para depuração
 DEBUG_LOG_QUERIES: bool = _get_required_bool("DEBUG_LOG_QUERIES")
 
-
-# Timeouts opcionais (segundos)
-# Tempo máximo para conectar no PostgreSQL real
-CONNECT_TIMEOUT_SECS: int = _get_optional_int("CONNECT_TIMEOUT_SECS", 10)
-# Tempo máximo aguardando dados do cliente durante o startup/handshake
-CLIENT_IDLE_TIMEOUT_SECS: int = _get_optional_int("CLIENT_IDLE_TIMEOUT_SECS", 30)
 
