@@ -2,7 +2,7 @@ import asyncio
 import struct
 from typing import Tuple
 
-from config import PG_HOST, PG_PORT, SSL_REQUEST_CODE, DEBUG_LOG_QUERIES
+from config import PG_HOST, PG_PORT, SSL_REQUEST_CODE, DEBUG_LOG_QUERIES, CONNECT_TIMEOUT_SECS, CLIENT_IDLE_TIMEOUT_SECS
 from sql_rewriter import rewrite_schema_table
 
 
@@ -68,12 +68,38 @@ async def _forward_server_to_client(server_reader: asyncio.StreamReader, client_
         print(f'Erro no fluxo servidor->cliente: {e}')
 
 
+def _send_pg_error(client_writer: asyncio.StreamWriter, message: str, sqlstate: str = '08001', severity: str = 'ERROR') -> None:
+    try:
+        fields = []
+        fields.append(b'S' + severity.encode('utf-8') + b'\x00')
+        fields.append(b'C' + sqlstate.encode('utf-8') + b'\x00')
+        fields.append(b'M' + message.encode('utf-8') + b'\x00')
+        body = b''.join(fields) + b'\x00'
+        total_len = 4 + len(body)
+        client_writer.write(bytes([ord('E')]) + struct.pack('!I', total_len) + body)
+    except Exception:
+        pass
+
+
 async def _forward_client_to_server(client_reader: asyncio.StreamReader, server_writer: asyncio.StreamWriter, client_writer: asyncio.StreamWriter) -> None:
     buffer = bytearray()
     startup_phase = True
     try:
         while True:
-            chunk = await client_reader.read(65536)
+            try:
+                if startup_phase:
+                    chunk = await asyncio.wait_for(client_reader.read(65536), timeout=CLIENT_IDLE_TIMEOUT_SECS)
+                else:
+                    chunk = await client_reader.read(65536)
+            except asyncio.TimeoutError:
+                print(f'Timeout aguardando dados do cliente durante startup ({CLIENT_IDLE_TIMEOUT_SECS}s)')
+                _send_pg_error(client_writer, f'Timeout aguardando dados do cliente ({CLIENT_IDLE_TIMEOUT_SECS}s)')
+                try:
+                    client_writer.close()
+                    await client_writer.drain()
+                except Exception:
+                    pass
+                return
             if not chunk:
                 break
             buffer.extend(chunk)
@@ -203,7 +229,30 @@ async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyn
     peer = client_writer.get_extra_info('peername')
     print(f'Cliente conectado: {peer}')
     try:
-        server_reader, server_writer = await asyncio.open_connection(PG_HOST, PG_PORT)
+        try:
+            server_reader, server_writer = await asyncio.wait_for(
+                asyncio.open_connection(PG_HOST, PG_PORT),
+                timeout=CONNECT_TIMEOUT_SECS,
+            )
+        except asyncio.TimeoutError:
+            print(f'Erro ao conectar ao PostgreSQL real em {PG_HOST}:{PG_PORT}: timeout ({CONNECT_TIMEOUT_SECS}s)')
+            # Fechar rapidamente para o cliente não ficar travado
+            try:
+                _send_pg_error(client_writer, f'Falha ao conectar ao servidor ({PG_HOST}:{PG_PORT}): timeout ({CONNECT_TIMEOUT_SECS}s)')
+                client_writer.close()
+                await client_writer.drain()
+            except Exception:
+                pass
+            return
+        except Exception as e:
+            print(f'Erro ao conectar ao PostgreSQL real em {PG_HOST}:{PG_PORT}: {e}')
+            try:
+                _send_pg_error(client_writer, f'Falha ao conectar ao servidor ({PG_HOST}:{PG_PORT}): {e}')
+                client_writer.close()
+                await client_writer.drain()
+            except Exception:
+                pass
+            return
         print(f'Conectado ao PostgreSQL real em {PG_HOST}:{PG_PORT}')
 
         t1 = asyncio.create_task(_forward_client_to_server(client_reader, server_writer, client_writer))
